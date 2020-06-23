@@ -1,26 +1,21 @@
 ﻿namespace FlightSimulatorApp.Model {
     using System;
-    using System.Collections.Generic;
-    using System.Linq;
+    using System.Collections.Concurrent;
+    using System.Threading;
     using System.Threading.Tasks;
-    using Autofac.Core;
-    using Autofac.Extensions.DependencyInjection;
     using FlightMobileWeb.FlightGear;
-    using Microsoft.CodeAnalysis.Host;
-    using Microsoft.Extensions.DependencyInjection;
+    using FlightMobileWeb.FlightGear.Data_Stractures;
+    using FlightMobileWeb.Models;
 
     public class FlightGearClient : IFlightGearClient {
-        private const string NoError = "No error";
-        private const string ClientNotConnectedError = "A connection to Flight Gear simulator has to be established before sending/recieving data.";
-        private const string AlreadyConnectedError =
-                "Client already connected to another server.\nDisconnect before trying to instanciate an other connection.";
-        private const string VarValueCastingError = "Failed to parse a returned value";
-        private const string ParsingError = "Error while parsing server's answer to double";
         private const string FlightGearSendOnlyDataCommand = "data\r\n";
+        private static readonly double Tolerance = Math.Pow(10, -4);
         private readonly ITelnetClient telnetClient;
+        private readonly BlockingCollection<AsyncCommand> queue;
         private string ip;
         private int port;
-        private string error = NoError;
+        private Errors error = Errors.NoError;
+        private Task processCommandTask;
 
         /// <inheritdoc />
         public string IP {
@@ -29,7 +24,7 @@
                 if (isValidIP(value)) {
                     this.ip = value;
                 } else {
-                    this.Error = "Invalid IP";
+                    this.Error = Errors.InvalidIP;
                 }
             }
         }
@@ -41,13 +36,14 @@
                 if (isValidPort(value)) {
                     this.port = value;
                 } else {
-                    this.Error = "Invalid Port";
+                    this.Error = Errors.InvalidPort;
                 }
             }
         }
 
         public FlightGearClient(ITelnetClient telnetClient) {
             this.telnetClient = telnetClient;
+            this.queue = new BlockingCollection<AsyncCommand>();
         }
 
         /// <inheritdoc />
@@ -56,70 +52,137 @@
         }
 
         /// <inheritdoc />
-        public string Error {
+        private Errors Error {
             get {
-                string temp = this.error;
-                this.error = NoError;
+                Errors temp = this.error;
+                this.error = Errors.NoError;
                 return temp;
             }
 
-            private set {
-                if (!string.IsNullOrWhiteSpace(value)) {
-                    this.error = value;
-                }
-            }
+            set { this.error = value; }
         }
 
         /// <inheritdoc />
-        public bool HasError => !this.Error.Equals(NoError);
+        private bool HasError => this.error != Errors.NoError;
 
         /// <inheritdoc />
-        public async Task SetValueAsync(FlightGearDataVariable var, double value) {
-            if (!await this.EnsureConnection()) {
+        private void SetValue(FlightGearDataVariable var, double value) {
+            if (!this.ensureConnected()) {
                 return;
             }
 
             string request = $"set {var.Path} {value} \r\n";
-            await this.telnetClient.SendAsync(request);
+            this.telnetClient.Send(request);
+        }
+
+        private bool ensureConnected() {
+            if (this.IsConnected) {
+                return true;
+            }
+            this.telnetClient.Connect(this.IP, this.Port);
+            if (this.IsConnected) {
+                if (this.processCommandTask == null || this.processCommandTask.Status == TaskStatus.Canceled
+                                                    || this.processCommandTask.Status == TaskStatus.Faulted) {
+                    this.processCommandTask.Dispose();
+                    this.processCommandTask = Task.Factory.StartNew(this.ProcessCommands);
+                }
+                this.telnetClient.Send(FlightGearSendOnlyDataCommand);
+                return true;
+            }
+
+            return false;
         }
 
         /// <inheritdoc />
-        public async Task<double?> GetValueAsync(FlightGearDataVariable var) {
-            if (!await this.EnsureConnection()) {
+        private double? GetValue(FlightGearDataVariable var) {
+            if (!this.ensureConnected()) {
                 return null;
             }
 
             string request = $"get {var.Path} \r\n";
-            await this.telnetClient.SendAsync(request);
-            string answer = await this.telnetClient.ReadAsync();
+            this.telnetClient.SendAsync(request);
+            string answer = this.telnetClient.Read();
             if (double.TryParse(answer, out double value)) {
                 return value;
             }
-            this.Error = ParsingError;
+
+            this.Error = Errors.ParsingError;
+            return null;
+        }
+
+        private async Task<double?> GetValueAsync(FlightGearDataVariable var) {
+
+            string request = $"get {var.Path} \r\n";
+            this.telnetClient.SendAsync(request);
+            string answer = this.telnetClient.Read();
+            if (double.TryParse(answer, out double value)) {
+                return value;
+            }
+
+            this.Error = Errors.ParsingError;
             return null;
         }
 
         /// <inheritdoc />
-        public async Task<bool> StartAsync() {
-            if (this.HasError) {
-                return false;
+        public void Start() {
+            try {
+                this.processCommandTask = Task.Factory.StartNew(this.ProcessCommands);
+                this.telnetClient.Connect(this.IP, this.Port);
+                this.telnetClient.Send(FlightGearSendOnlyDataCommand);
             }
+            catch (Exception e) {
+                Console.WriteLine(e);
+            }
+        }
 
-            if (this.IsConnected) {
-                this.Error = AlreadyConnectedError;
-                return false;
+        /// <summary>
+        /// The process commands.
+        /// </summary>
+        private async void ProcessCommands() {
+            foreach (AsyncCommand asyncCommand in this.queue.GetConsumingEnumerable()) {
+                this.SetValue(FlightGearDataVariable.Aileron, asyncCommand.Command.Aileron);
+                this.SetValue(FlightGearDataVariable.Elevator, asyncCommand.Command.Elevator);
+                this.SetValue(FlightGearDataVariable.Rudder, asyncCommand.Command.Rudder);
+                this.SetValue(FlightGearDataVariable.Throttle, asyncCommand.Command.Throttle);
+                if (this.HasError) {
+                    Console.WriteLine(this.Error);
+                    asyncCommand.Completion.SetResult(Result.Invalid);
+                } else if (await this.ValidateCommand(asyncCommand.Command) && !this.HasError) {
+                    asyncCommand.Completion.SetResult(Result.OK);
+                } else {
+                    this.Restart();
+                    asyncCommand.Completion.SetResult(Result.Invalid);
+                }
             }
-            await this.telnetClient.ConnectAsync(this.IP, this.Port);
-            if (this.IsConnected) {
-                await this.telnetClient.SendAsync(FlightGearSendOnlyDataCommand);
-            }
+        }
 
-            return this.IsConnected;
+        public Task<Result> ExecuteCommand(Command command) {
+            var asyncCommand = new AsyncCommand(command);
+            this.queue.Add(asyncCommand);
+            return asyncCommand.Task;
+        }
+
+        private bool ValidateSentValue(FlightGearDataVariable var, double value) {
+            double? varValue = this.GetValue(var);
+            return varValue.HasValue && Math.Abs(varValue.Value - value) <= Tolerance;
+        }
+        private async Task<bool> ValidateSentValueAsync(FlightGearDataVariable var, double value) {
+            double? varValue = await this.GetValueAsync(var);
+            return varValue.HasValue && Math.Abs(varValue.Value - value) <= Tolerance;
+        }
+
+        private async Task<bool> ValidateCommand(Command command) {
+            bool aileron = await this.ValidateSentValueAsync(FlightGearDataVariable.Aileron, command.Aileron);
+            bool elevator = await this.ValidateSentValueAsync(FlightGearDataVariable.Elevator, command.Elevator);
+            bool rudder = await this.ValidateSentValueAsync(FlightGearDataVariable.Rudder, command.Rudder);
+            bool throttle = await this.ValidateSentValueAsync(FlightGearDataVariable.Throttle, command.Throttle);
+            return aileron && elevator && rudder && throttle;
         }
 
         /// <inheritdoc />
-        public async Task Restart() {
-            await this.telnetClient.FlushAsync();
+        private void Restart() {
+            this.telnetClient.Flush();
+            this.Error = Errors.NoError;
         }
 
         /// <inheritdoc />
@@ -127,23 +190,10 @@
             if (!this.IsConnected) {
                 return true;
             }
+
             this.telnetClient.Disconnect();
-            this.Error = NoError;
+            this.Error = Errors.NoError;
             return true;
-        }
-
-        private async Task<bool> EnsureConnection() {
-            if (this.IsConnected) {
-                return true;
-            }
-
-            bool connected = await this.StartAsync();
-            if (connected) {
-                return true;
-            }
-
-            this.Error = ClientNotConnectedError;
-            return false;
         }
 
         /// <summary>

@@ -5,10 +5,12 @@ namespace FlightSimulatorApp.Model {
     using System.IO;
     using System.Net;
     using System.Net.Sockets;
-    using System.Reflection;
+    using System.Threading;
     using System.Threading.Tasks;
 
     class TelnetClient : ITelnetClient {
+        private static Mutex mut = new Mutex();
+
         /// <summary>The size</summary>
         protected const short Size = 512;
 
@@ -28,8 +30,34 @@ namespace FlightSimulatorApp.Model {
         /// </summary>
         /// <param name="ip">The ip.</param>
         /// <param name="port">The port.</param>
-        public async Task ConnectAsync(string ip, int port) {
-            await this.client.ConnectAsync(IPAddress.Parse(ip), port);
+        public void ConnectAsync(string ip, int port) {
+            if (mut.WaitOne(5000) && !this.IsConnected) {
+                // if (this.IsConnected) {
+                // return;
+                // }
+                try {
+                    var asyncResult = this.client.BeginConnect(
+                            IPAddress.Parse(ip),
+                            port,
+                            ar => {
+                                if (ar.IsCompleted) {
+                                    Console.WriteLine("connection made");
+                                } else {
+                                    Console.WriteLine("connection failed");
+                                }
+                            },
+                            this);
+                    while (!asyncResult.IsCompleted) {
+                        Thread.Sleep(1000);
+                    }
+                }
+                catch (Exception e) {
+                    Console.WriteLine(e);
+                    throw;
+                } finally {
+                    mut.ReleaseMutex();
+                }
+            }
         }
 
         /// <inheritdoc />
@@ -44,7 +72,6 @@ namespace FlightSimulatorApp.Model {
             if (this.IsConnected) {
                 this.client.Close();
             }
-
             this.client = new TcpClient(AddressFamily.InterNetwork);
         }
 
@@ -62,7 +89,20 @@ namespace FlightSimulatorApp.Model {
                 }
             }
             catch (Exception e) {
-                throw new IOException(e.Message);
+                Console.WriteLine(e);
+            }
+        }
+
+        /// <inheritdoc />
+        public void Send(string data) {
+            try {
+                if (this.IsConnected) {
+                    NetworkStream networkStream = this.client.GetStream();
+                    byte[] sendBytes = Encoding.ASCII.GetBytes(data);
+                    networkStream.Write(sendBytes, 0, sendBytes.Length);
+                }
+            } catch (Exception e) {
+                Console.WriteLine(e);
             }
         }
 
@@ -74,8 +114,8 @@ namespace FlightSimulatorApp.Model {
         }
 
         /// <inheritdoc />
-        public async Task FlushAsync() {
-            await this.client.GetStream().FlushAsync();
+        public Task FlushAsync() {
+            return this.client.GetStream().FlushAsync();
         }
 
         /// <summary>
@@ -89,15 +129,31 @@ namespace FlightSimulatorApp.Model {
                 NetworkStream ns = this.client.GetStream();
                 try {
                     byte[] dataBytes = new byte[Size];
-                    int bytesRead = await ns.ReadAsync(dataBytes, 0, Size).ConfigureAwait(false);
+                    int bytesRead = await ns.ReadAsync(dataBytes, 0, Size);
                     dataToReturn = Encoding.ASCII.GetString(dataBytes, 0, bytesRead);
                     return dataToReturn;
                 }
                 catch (Exception e) {
-                    throw new IOException(e.Message);
+                    Console.WriteLine(e);
                 }
             }
+            return dataToReturn;
+        }
 
+        /// <inheritdoc />
+        public string Read() {
+            string dataToReturn = string.Empty;
+            if (this.IsConnected) {
+                NetworkStream ns = this.client.GetStream();
+                try {
+                    byte[] dataBytes = new byte[Size];
+                    int bytesRead = ns.Read(dataBytes, 0, Size);
+                    dataToReturn = Encoding.ASCII.GetString(dataBytes, 0, bytesRead);
+                    return dataToReturn;
+                } catch (Exception e) {
+                    Console.WriteLine(e);
+                }
+            }
             return dataToReturn;
         }
     }

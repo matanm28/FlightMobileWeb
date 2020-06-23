@@ -6,13 +6,10 @@ using Microsoft.Extensions.Hosting;
 
 namespace FlightControlWeb {
     using System;
-    using System.Collections.Generic;
     using Autofac;
-    using Autofac.Core;
     using Autofac.Extensions.DependencyInjection;
     using FlightMobileWeb.Controllers;
     using FlightSimulatorApp.Model;
-    using Newtonsoft.Json;
 
     public class Startup {
         private const int SecondsToTimeOut = 5;
@@ -49,6 +46,7 @@ namespace FlightControlWeb {
                                                       IP = this.Configuration.GetSection("FlightGear")["tcp_ip"],
                                                       Port = int.Parse(this.Configuration.GetSection("FlightGear")["tcp_port"])
                                               };
+            client.Start();
             builder.Register(c => client).As<IFlightGearClient>().SingleInstance();
         }
 
@@ -56,14 +54,10 @@ namespace FlightControlWeb {
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env) {
             if (env.IsDevelopment()) {
                 app.UseDeveloperExceptionPage();
-                ScreenshotController.debugMode = true;
+                //ScreenshotController.debugMode = true;
             }
 
             this.AutofacContainer = app.ApplicationServices.GetAutofacRoot();
-
-            app.UseStaticFiles();
-
-            app.UseHttpsRedirection();
 
             app.UseRouting();
 

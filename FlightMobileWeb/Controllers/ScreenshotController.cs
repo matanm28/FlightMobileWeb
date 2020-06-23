@@ -3,8 +3,8 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FlightMobileWeb.Controllers {
-    using System.IO;
     using System.Net.Http;
+    
 
     [Route("api/[controller]")]
     [ApiController]
@@ -18,20 +18,24 @@ namespace FlightMobileWeb.Controllers {
             this.httpClient = httpClient;
         }
 
-        // POST: api/Screenshot
+        // GET: api/Screenshot
         [HttpGet]
         public async Task<ActionResult<byte[]>> GetScreenshot() {
             try {
                 byte[] bytesArr = await this.httpClient.GetByteArrayAsync("screenshot?type=jpg");
-                if (debugMode) {
-                    string documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-                    string localFileName = @"\FlightMobileWeb\pic_" + picNumber + ".jpg";
-                    picNumber++;
-                    string localPath = documentsPath + localFileName;
-                    await System.IO.File.WriteAllBytesAsync(localPath, bytesArr);
-                }
+                //if (debugMode) {
+                //    Thread t = new Thread(
+                //            async delegate() {
+                //                string documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+                //                string localFileName = @"\FlightMobileWeb\pic_" + picNumber + ".jpg";
+                //                picNumber++;
+                //                string localPath = documentsPath + localFileName;
+                //                await System.IO.File.WriteAllBytesAsync(localPath, bytesArr);
+                //            });
+                //    t.Start();
+                //}
 
-                return File(bytesArr,"image/jpeg");
+                return File(bytesArr, "image/jpeg");
             }
             catch (Exception e) {
                 Console.WriteLine(e);
