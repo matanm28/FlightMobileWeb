@@ -21,7 +21,7 @@
         public string IP {
             get { return this.ip; }
             set {
-                if (isValidIP(value)) {
+                if (IsValidIP(value)) {
                     this.ip = value;
                 } else {
                     this.Error = Errors.InvalidIP;
@@ -33,7 +33,7 @@
         public int Port {
             get { return this.port; }
             set {
-                if (isValidPort(value)) {
+                if (IsValidPort(value)) {
                     this.port = value;
                 } else {
                     this.Error = Errors.InvalidPort;
@@ -67,15 +67,15 @@
 
         /// <inheritdoc />
         private void SetValue(FlightGearDataVariable var, double value) {
-            if (!this.ensureConnected()) {
-                return;
-            }
+            //if (!this.EnsureConnected()) {
+            //    return;
+            //}
 
             string request = $"set {var.Path} {value} \r\n";
             this.telnetClient.Send(request);
         }
 
-        private bool ensureConnected() {
+        private bool EnsureConnected() {
             if (this.IsConnected) {
                 return true;
             }
@@ -95,9 +95,9 @@
 
         /// <inheritdoc />
         private double? GetValue(FlightGearDataVariable var) {
-            if (!this.ensureConnected()) {
-                return null;
-            }
+            //if (!this.EnsureConnected()) {
+            //    return null;
+            //}
 
             string request = $"get {var.Path} \r\n";
             this.telnetClient.SendAsync(request);
@@ -113,7 +113,7 @@
         private async Task<double?> GetValueAsync(FlightGearDataVariable var) {
 
             string request = $"get {var.Path} \r\n";
-            this.telnetClient.SendAsync(request);
+            await this.telnetClient.SendAsync(request);
             string answer = this.telnetClient.Read();
             if (double.TryParse(answer, out double value)) {
                 return value;
@@ -131,7 +131,12 @@
                 this.telnetClient.Send(FlightGearSendOnlyDataCommand);
             }
             catch (Exception e) {
-                Console.WriteLine(e);
+                Console.Error.WriteLine(e);
+                Console.Error.WriteLine(e.StackTrace);
+                Console.Error.WriteLine("\n\n*****************************************************************************");
+                Console.Error.WriteLine("Failed to connect to server.\nYou should run Flight Gear server before running this API server.");
+                Console.Error.WriteLine("*****************************************************************************");
+                throw;
             }
         }
 
@@ -201,7 +206,7 @@
         /// </summary>
         /// <param name="ip">The ip.</param>
         /// <returns></returns>
-        private static bool isValidIP(string ip) {
+        private static bool IsValidIP(string ip) {
             if (ip.ToUpper() == "localhost".ToUpper()) {
                 return true;
             }
@@ -232,7 +237,7 @@
         /// </summary>
         /// <param name="port">The port.</param>
         /// <returns></returns>
-        private static bool isValidPort(int port) {
+        private static bool IsValidPort(int port) {
             return port >= 1024 && port <= Math.Pow(2, 16);
         }
     }

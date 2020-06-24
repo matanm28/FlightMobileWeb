@@ -12,7 +12,6 @@ namespace FlightMobileWeb.Controllers {
     [ApiController]
     public class CommandController : ControllerBase {
         private readonly IFlightGearClient client;
-        private static readonly double Tolerance = Math.Pow(10, -4);
 
         public CommandController(IFlightGearClient client) {
             this.client = client;

@@ -9,7 +9,7 @@ namespace FlightSimulatorApp.Model {
     using System.Threading.Tasks;
 
     class TelnetClient : ITelnetClient {
-        private static Mutex mut = new Mutex();
+        private static readonly Mutex mut = new Mutex();
 
         /// <summary>The size</summary>
         protected const short Size = 512;
